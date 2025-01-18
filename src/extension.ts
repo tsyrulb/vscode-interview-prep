@@ -1,76 +1,52 @@
 import * as vscode from 'vscode';
-import axios from 'axios';
+import * as sqlite3 from 'sqlite3';
+import * as path from 'path';
 
-interface Problem {
-  contestId: number;
-  index: string;
-  name: string;
-  rating?: number;
-  tags: string[];
-  description?: string;
+// Define the database path
+const dbPath = path.resolve(__dirname, '../data/problems.db');
+const db = new sqlite3.Database(dbPath);
+
+// Function to fetch a random problem
+function fetchRandomProblem(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT * FROM problems ORDER BY RANDOM() LIMIT 1', (err, row) => {
+      if (err) {
+        return reject(new Error(`Error querying the database: ${err.message}`));
+      }
+      if (!row) {
+        return reject(new Error('No problems found in the database.'));
+      }
+      resolve(row);
+    });
+  });
 }
 
-type Language = 'Python' | 'C++' | 'JavaScript' | 'Java';
+// Function to display problem details in a Webview with Markdown rendering
+function showProblemDetails(problem: any) {
+  const panel = vscode.window.createWebviewPanel(
+    'problemDetails',
+    `Problem: ${problem.question}`,
+    vscode.ViewColumn.One,
+    {
+      enableScripts: true,
+    }
+  );
 
-function isLanguage(value: string): value is Language {
-	return ['Python', 'C++', 'JavaScript', 'Java'].includes(value);
-  }
-  
-  export async function activate(context: vscode.ExtensionContext) {
-	const getQuestionCmd = vscode.commands.registerCommand('vscode-interview-prep.getRandomQuestion', async () => {
-	  try {
-		const response = await axios.get('https://codeforces.com/api/problemset.problems');
-		const problems: Problem[] = response.data.result.problems;
-  
-		const randomProblem = problems[Math.floor(Math.random() * problems.length)];
-		const languages: Language[] = ['Python', 'C++', 'JavaScript', 'Java'];
+  // Convert Markdown description to HTML
+  const marked = require('marked');
+  const descriptionHtml = marked.parse(problem.question || '');
 
-		// Choose language
-		const language = await vscode.window.showQuickPick(languages, {
-		  placeHolder: 'Choose a programming language',
-		});
-  
-		// Ensure the selected language is valid
-		if (!language || !isLanguage(language)) {
-		  vscode.window.showInformationMessage('No valid language selected. Aborting.');
-		  return;
-		}
-  
-		// Show problem details in a Webview
-		await showProblemDetails(randomProblem);
-  
-		// Generate and open starter code
-		const starterCode = getStarterCode(
-		  language,
-		  randomProblem.name,
-		  `Rating: ${randomProblem.rating || 'Unrated'}\nTags: ${randomProblem.tags?.join(', ') || 'None'}`
-		);
-  
-		const doc = await vscode.workspace.openTextDocument({ content: starterCode, language: language.toLowerCase() });
-		await vscode.window.showTextDocument(doc);
-	  } catch (error) {
-		vscode.window.showErrorMessage('Failed to fetch programming problems.');
-		console.error(error);
-	  }
-	});
-  
-	context.subscriptions.push(getQuestionCmd);
-  }
-  
-
-function getStarterCode(language: Language, problemTitle: string, problemDescription: string): string {
-  const commentPrefix = language === 'Python' ? '#' : '//';
-  const starterCode: Record<Language, string> = {
-    Python: `${commentPrefix} Problem: ${problemTitle}\n${commentPrefix} ${problemDescription}\n\n# Write your solution here\n`,
-    'C++': `${commentPrefix} Problem: ${problemTitle}\n${commentPrefix} ${problemDescription}\n\n#include <iostream>\nusing namespace std;\n\nint main() {\n    // Write your solution here\n    return 0;\n}`,
-    JavaScript: `${commentPrefix} Problem: ${problemTitle}\n${commentPrefix} ${problemDescription}\n\n// Write your solution here\n`,
-    Java: `${commentPrefix} Problem: ${problemTitle}\n${commentPrefix} ${problemDescription}\n\npublic class Solution {\n    public static void main(String[] args) {\n        // Write your solution here\n    }\n}`,
-  };
-  return starterCode[language];
-}
-
-async function showProblemDetails(problem: Problem) {
-  const panel = vscode.window.createWebviewPanel('problemDetails', `Problem: ${problem.name}`, vscode.ViewColumn.Beside, {});
+  const formattedSolutions = JSON.parse(problem.solutions || '[]')
+    .map(
+      (solution: string, index: number) => `
+        <details class="solution">
+          <summary>Solution ${index + 1}</summary>
+          <pre><code class="language-python">${solution}</code></pre>
+          <button class="copy-button" data-code="${solution}" onclick="copyCode(this)">Copy Code</button>
+        </details>
+      `
+    )
+    .join('');
 
   panel.webview.html = `
     <!DOCTYPE html>
@@ -78,19 +54,148 @@ async function showProblemDetails(problem: Problem) {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${problem.name}</title>
+      <title>${problem.question}</title>
+      <style>
+        /* General Styles */
+        body {
+          font-family: Arial, sans-serif;
+          line-height: 1.6;
+          margin: 20px;
+          max-width: 800px;
+          color: #333;
+          background-color: #f9f9f9;
+        }
+
+        h1, h2 {
+          color: #2c3e50;
+        }
+
+        a {
+          color: #3498db;
+          text-decoration: none;
+        }
+
+        pre {
+          background-color: #2d2d2d;
+          color: #ffffff;
+          padding: 10px;
+          border-radius: 5px;
+          font-family: 'Courier New', monospace;
+        }
+
+        .metadata, .section {
+          margin-bottom: 20px;
+          padding: 15px;
+          border-radius: 5px;
+          background-color: #ecf0f1;
+          box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .copy-button {
+          display: block;
+          margin: 10px 0;
+          background: #3498db;
+          color: white;
+          border: none;
+          padding: 10px;
+          border-radius: 5px;
+          cursor: pointer;
+        }
+
+        .copy-button:hover {
+          background: #2980b9;
+        }
+
+        .solution summary {
+          cursor: pointer;
+          font-weight: bold;
+        }
+
+        .solution pre {
+          margin: 10px 0;
+        }
+
+        .solution {
+          margin-bottom: 20px;
+        }
+
+        hr {
+          border: none;
+          border-top: 1px solid #ddd;
+          margin: 20px 0;
+        }
+      </style>
+      <!-- Include Highlight.js -->
+      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css">
     </head>
     <body>
-      <h1>${problem.name}</h1>
-      <p><strong>Rating:</strong> ${problem.rating || 'Unrated'}</p>
-      <p><strong>Tags:</strong> ${problem.tags?.join(', ') || 'None'}</p>
-      <h3>Description</h3>
-      <p>${problem.description || 'No description available.'}</p>
-      <h3>URL</h3>
-      <p><a href="https://codeforces.com/contest/${problem.contestId}/problem/${problem.index}" target="_blank">Open Problem on Codeforces</a></p>
+      <h1>Problem Description</h1>
+      <div class="metadata">
+        <p><strong>Difficulty:</strong> ${problem.difficulty || 'Unknown'}</p>
+        <p><strong>URL:</strong> <a href="${problem.url || '#'}" target="_blank">Open Problem</a></p>
+      </div>
+
+      <!-- Rendered Markdown -->
+      <div class="section">
+        ${descriptionHtml}
+      </div>
+
+      <div class="section">
+        <h2>Solutions</h2>
+        ${formattedSolutions || '<p>No solutions available.</p>'}
+      </div>
+
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>
+        document.querySelectorAll('pre code').forEach((block) => {
+          hljs.highlightElement(block);
+        });
+
+        function copyCode(button) {
+          const code = button.getAttribute('data-code');
+          navigator.clipboard
+            .writeText(code)
+            .then(() => {
+              button.textContent = 'Copied!';
+              button.style.backgroundColor = '#27ae60';
+              setTimeout(() => {
+                button.textContent = 'Copy Code';
+                button.style.backgroundColor = '';
+              }, 2000);
+            })
+            .catch(() => {
+              button.textContent = 'Failed to copy!';
+              button.style.backgroundColor = '#e74c3c';
+            });
+        }
+      </script>
     </body>
     </html>
   `;
 }
 
-export function deactivate() {}
+// VS Code extension activation
+export async function activate(context: vscode.ExtensionContext) {
+  const getRandomQuestionCmd = vscode.commands.registerCommand('vscode-interview-prep.getRandomQuestion', async () => {
+    try {
+      const randomProblem = await fetchRandomProblem();
+      showProblemDetails(randomProblem);
+    } catch (error) {
+      vscode.window.showErrorMessage('Failed to fetch a random problem. Please try again.');
+      console.error('Error fetching problem from SQLite:', error);
+    }
+  });
+
+  context.subscriptions.push(getRandomQuestionCmd);
+}
+
+// Close the database when the extension is deactivated
+export function deactivate() {
+  db.close((err) => {
+    if (err) {
+      console.error('Error closing the SQLite database:', err.message);
+    } else {
+      console.log('SQLite database connection closed.');
+    }
+  });
+}
