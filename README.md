@@ -1,5 +1,5 @@
-# vscode-interview-prep (in development)
-
+# vscode-interview-prep 
+**This project is currently in development**
 ## Overview
 `vscode-interview-prep` is a Visual Studio Code extension that helps users practice coding problems, view solutions, and get AI-generated explanations and feedback. The extension connects to an SQLite database containing problems and integrates with Google Generative AI to provide detailed explanations and analyze user code.
 
